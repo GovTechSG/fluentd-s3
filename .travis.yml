@@ -1,0 +1,41 @@
+sudo: required
+language: bash
+services:
+  - docker
+stages:
+  - build_and_push
+before_script:
+  - docker login -u "${DH_USERNAME}" -p "${DH_PASSWORD}"
+after_script:
+  - docker logout
+.build_script: &build_script
+  script:
+    - NEXT_TAG="${DH_REPO}:${GEM_NAME}-next";
+    - docker build --build-arg GEM_NAME=${GEM_NAME} --build-arg GEM_VERSION=${GEM_VERSION:-""} -t "${NEXT_TAG}" .;
+    - VERSIONS=$(docker run --entrypoint="version-info" ${NEXT_TAG});
+    - echo "Installed Versions=${VERSIONS}"
+    - VERSION_FLUENTD=$(printf "${VERSIONS}" | grep "fluentd:" | cut -d ":" -f 2);
+    - GEM_INSTALLED=$(printf "${VERSIONS}" | grep -E "fluent-plugin-s3" | cut -d ":" -f 1);
+    - GEM_VERSION=$(printf "${VERSIONS}" | grep -E "fluent-plugin-s3" | cut -d ":" -f 2);
+    - PREFIX="fluentd-${VERSION_FLUENTD}_${GEM_INSTALLED}"
+    - BUILD_TAG="${DH_REPO}:${PREFIX}-${GEM_VERSION}"
+    - echo "New Docker Tag=${BUILD_TAG}"
+    - _="$(docker pull "${BUILD_TAG}")" && EXIST=$? || :;
+    - |
+      if [[ "$EXIST" = "0" ]]; then
+        printf "[${BUILD_TAG}] found, skipping push\n";
+        echo exists;
+      else
+        printf "[${BUILD_TAG}] not found, pushing to docker hub\n";
+        docker tag ${NEXT_TAG} ${BUILD_TAG};
+        docker push ${BUILD_TAG};
+        docker tag ${BUILD_TAG} ${DH_REPO}:${PREFIX}-latest;
+        docker push ${DH_REPO}:${PREFIX}-latest;
+      fi
+jobs:
+  include:
+    - stage: build_and_push
+      env:
+        - GEM_NAME="fluent-plugin-s3"
+      <<: *build_script
+
